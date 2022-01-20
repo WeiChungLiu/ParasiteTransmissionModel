@@ -1,0 +1,220 @@
+const
+NumHS=83; //Number of host species
+NumPS=40; //Number of parasite species
+
+var web: array of array of integer; //Food web: array of dimension NumHS by NumHS, with row species consumed by column species.
+var hpnet: array of array of integer; //host-parasite network: array of dimension NumHS by NumPS, row species are hosts, column species are parasites.
+var ChSet:set of '!'..'~';//A Set can only hold 256 elements
+var Alpha:real; //Seeding probability, the alpha parameter
+var Beta:real; //Trnamission probability, the beta parameter
+var pd:array [0..NumPS] of integer; //For parasite diversity distribution
+var BasalSp:array[1..NumHS] of integer; //To indicate which host species are basal species, if 1 means "yes", 0 means "no"
+
+procedure InitialiseChSet;//Set the ChSet by including useable chars, all other chars are used as seperators
+var i:char;
+begin
+  ChSet:=[];
+  for i:='A' to 'Z' do ChSet:=ChSet+[i];
+  for i:='a' to 'z' do ChSet:=ChSet+[i];
+  for i:='0' to '9' do ChSet:=ChSet+[i];
+  ChSet:=ChSet+['.'];
+  ChSet:=ChSet+['-'];
+  ChSet:=ChSet+['/'];
+end;
+
+procedure GetInfo;//Read the content of the textfile row by row
+var i,j,k:integer;
+    F1:textfile;
+    finger1,finger2,finger3,count:integer;
+    DataRow:string;
+    inthere:boolean;
+    String1:array of string;
+begin
+  count:=0;
+  AssignFile(F1,'Carpinteria.txt'); // File name for Carpinteria food web. Food web data are in matrix form, with row species consumed by column species
+  Reset(F1);
+  while not Eof(F1) do
+  begin
+    SetLength(String1,0);
+    SetLength(String1,1);
+
+    Readln(F1, DataRow);
+
+    inthere:=false;//If DataRow has no info, then the programe assumes it is the end of the input file and stops reading
+    for i:=1 to Length(DataRow) do if ((DataRow[i] in ChSet)=true) then
+    begin
+      inthere:=true;
+      break;
+    end;
+    if (inthere=false) then break;
+
+    count:=count+1;//it indicates the count-th row of the input data
+    finger1:=0;//finger1 is 1 if the next character in DataRow is defined in ChSet, otherwise 0.
+    finger2:=1;//it means next time when finger1=1 we will have a new info
+    finger3:=0;//it indicates the finger3-th information of a given row.
+
+    for i:=1 to Length(DataRow) do
+    begin
+      if ((DataRow[i] in ChSet)=true) then finger1:=1 else
+      begin
+        finger1:=0;
+        finger2:=1;
+      end;
+      if (finger1=1) and (finger2=1) then
+      begin
+        SetLength(String1,Length(String1)+1);
+        finger3:=finger3+1;
+        finger2:=0;
+      end;
+      if (finger1=1) and (finger2=0) then String1[finger3]:=String1[finger3]+DataRow[i];
+    end;
+
+    //////////////////////////////what  to do with info goes to here
+    for i:=1 to NumHS do if (String1[i]<>'0') then web[count,i]:=1; // Meaning prey species 'count' is consumed by predator species 'i'
+    //////////////////////////////
+
+  end;
+  CloseFile(F1);
+end;
+
+procedure getweb;// Get food web
+var i:integer;
+begin
+  SetLength(web, 0);// Food web: array of dimension NumHS by NumHS, with row species consumed by column species.
+  setLength(web, NumHS+1);
+  for i:=0 to NumHS do SetLength(web[i], NumHS+1);
+  InitialiseChSet;// Character set used for reading text
+  GetInfo;// Read food web information from a text file and put it into web
+end;
+
+procedure FindBasalSpecies;//Determine which species are basal species
+var i,j,PreyItem:integer;
+begin
+  for i:=1 to NumHS do BasalSp[i]:=0;
+  for i:=1 to NumHs do
+  begin
+    PreyItem:=0;
+    for j:=1 to NumHs do if (web[j,i]=1) then PreyItem:=PreyItem+1;
+    if (PreyItem=0) then BasalSp[i]:=1 //If a species eats no prey items, then it is a basal species
+  end;
+end;
+
+procedure addparasite;// Seeding phase
+var i,j:integer;
+var infected:boolean;
+begin
+  SetLength(hpnet,0); //hpnet contians infection information in seeding phase and trnamission phase
+  SetLength(hpnet, NumHS+1);
+  for i:=0 to length(hpnet)-1 do setlength(hpnet[i], NumPS+1);
+
+  for j:=1 to NumPS do
+  begin
+    infected:=false;
+    repeat //repeat until at least one host species is infected with parasite j
+        for i:=1 to NumHS do if (random<Alpha) and (BasalSp[i]=0) then// Like the Carpinteria ecosystem, basal species are not infected. If all species are prone to infection, then omit condition BasalSp[i]=0
+          begin
+            hpnet[i,j]:=1;
+            infected:=true;
+          end;
+    until (infected=true);
+  end;
+end;
+
+procedure transmission;//Transmission phase
+var i,j,k,h,wave:integer;
+var infec:boolean;
+var CurInf,PotInf:array of integer;
+var inflabel:array [1..NumHS] of integer;
+begin
+  for j:=1 to NumPS do // Track the spread of each parasite species
+  begin
+    //Here copy infections from seeding phase to current infection vector CurInf. This can be regarded as wave 0
+    SetLength(CurInf,0);
+    SetLength(CurInf,1);
+    for i:=1 to NumHS do if hpnet[i,j]=1 then
+    begin
+      SetLength(CurInf,length(CurInf)+1);
+      CurInf[length(CurInf)-1]:=i;
+      hpnet[i,j]:=1;
+    end;
+    wave:=0;
+    infec:=true;// If CurInf is not empty, then infec is true, idicating there are infected host species in current wave
+
+    while (infec=true) do // Repeat the infection process when there are new infections from this wave
+    begin
+      SetLength(PotInf,0); //PotInf contains potential host species for infection in next wave
+      SetLength(PotInf,1);
+      for k:=1 to length(CurInf)-1 do
+      begin
+        for h:=1 to NumHS do if (web[CurInf[k],h]=1) then // For a particular trophic link, if the prey species is currently infected, then the predator species is the potential host species.
+        begin
+          SetLength(PotInf, length(PotInf)+1);
+          PotInf[length(PotInf)-1]:=h;
+        end;
+      end;
+
+      SetLength(CurInf,0); // clear CurInf, and ready to record newly infected host species for next wave
+      SetLength(CurInf,1);
+      for k:=1 to NumHS do inflabel[k]:=0;
+      for k:=1 to length(PotInf)-1 do if (random<Beta) and (inflabel[PotInf[k]]=0) then // Trnamission occurs in a probabilistic manner depending on Beta
+      begin
+        hpnet[PotInf[k],j]:=1;
+        SetLength(CurInf,length(CurInf)+1);
+        CurInf[length(CurInf)-1]:=PotInf[k];
+        inflabel[PotInf[k]]:=1;
+      end;
+      if (length(CurInf)-1)>0 then // If this new CurInf is not empty, then that means infection can spread to next wave, thus infec is true, otherwise false
+      begin
+        infec:=true;
+        wave:=wave+1; //update wave
+      end else
+        infec:=false;
+    end;
+
+  end;
+end;
+
+procedure main;// Main procedure for model simulation
+var g,i,j,k,h,n:integer;
+var f1:textfile;
+var hos: array of real;
+var duf:string;
+begin
+  randomize;// Set random seed
+
+  // For calculating parasite diversity distribution
+  assignfile(f1,'Dist_PD.txt'); //Text file for recording expected probability distribution for parasite diversity after NumSim simulations
+  rewrite(f1);
+  duf:='Parasite_Diversity';
+  for h:=0 to NumPS do duf:=duf+','+IntToStr(h);
+  writeln(f1,duf);
+
+  getweb;// Get food web
+  FindBasalSpecies;// Determine which species are basal species
+  Alpha:=0.02;// Seeding probability, the alpha parameter
+  Beta:=0.47;// Trnamission probability, the beta parameter
+
+  for h:=0 to NumPS do pd[h]:=0;
+
+  addparasite;// Seeding phase of the model
+  transmission;// Transmission phase of the model
+
+  // For calculating parasite diversity distribution
+  setlength(hos,0);
+  setlength(hos, NumHS+1);
+  for h:=1 to NumHS do
+  begin
+    hos[h]:=0;
+    for n:=1 to NumPS do if hpnet[h,n]=1 then hos[h]:=hos[h]+1;
+    pd[round(hos[h])]:=pd[round(hos[h])]+1;
+  end;
+  hos[0]:=0;
+  for h:=1 to NumHS do hos[0]:=hos[0]+hos[h];
+  hos[0]:=hos[0]/NumHS;
+
+  // For calculating parasite diversity distribution
+  duf:='Frequency';
+  for h:=0 to NumPS do duf:=duf+','+IntToStr(pd[h]);
+  writeln(f1,duf);
+  closefile(f1);
+end;
